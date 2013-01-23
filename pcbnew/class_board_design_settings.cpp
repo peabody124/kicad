@@ -1,0 +1,232 @@
+/**
+ * @file class_board_design_settings.cpp
+ * BOARD_DESIGN_SETTINGS class functions.
+ */
+
+#include <fctsys.h>
+#include <common.h>
+#include <layers_id_colors_and_visibility.h>
+
+#include <pcbnew.h>
+#include <class_board_design_settings.h>
+
+#include <class_track.h>
+#include <convert_from_iu.h>
+
+// Board thickness, mainly for 3D view:
+#define DEFAULT_BOARD_THICKNESS_MM   1.6
+
+// Default values for some board items
+#define DEFAULT_TEXT_PCB_SIZE  Millimeter2iu( 1.5 )
+#define DEFAULT_TEXT_PCB_THICKNESS  Millimeter2iu( 0.3 )
+#define DEFAULT_PCB_EDGE_THICKNESS  Millimeter2iu( 0.15 )
+#define DEFAULT_GRAPHIC_THICKNESS   Millimeter2iu( 0.2 )
+#define DEFAULT_TEXT_MODULE_SIZE    Millimeter2iu( 1.5 )
+#define DEFAULT_GR_MODULE_THICKNESS Millimeter2iu( 0.15 )
+
+#define DEFAULT_SOLDERMASK_CLEARANCE Millimeter2iu( 0.2 )
+#define DEFAULT_SOLDERMASK_MIN_WIDTH Millimeter2iu( 0.0 )
+
+
+BOARD_DESIGN_SETTINGS::BOARD_DESIGN_SETTINGS() :
+    m_Pad_Master( 0 )
+{
+    m_EnabledLayers = ALL_LAYERS;               // All layers enabled at first.
+                                                // SetCopperLayerCount() will adjust this.
+
+    SetVisibleLayers( FULL_LAYERS );
+
+    // set all but hidden text as visible.
+    m_VisibleElements = ~( 1 << MOD_TEXT_INVISIBLE );
+
+    SetCopperLayerCount( 2 );                   // Default design is a double sided board
+
+    // via type (VIA_BLIND_BURIED, VIA_THROUGH VIA_MICROVIA).
+    m_CurrentViaType = VIA_THROUGH;
+
+    // if true, when creating a new track starting on an existing track, use this track width
+    m_UseConnectedTrackWidth = false;
+
+    m_MicroViasAllowed = false;                 // true to allow micro vias
+
+    m_DrawSegmentWidth = DEFAULT_GRAPHIC_THICKNESS;     // current graphic line width (not EDGE layer)
+
+    m_EdgeSegmentWidth = DEFAULT_PCB_EDGE_THICKNESS;    // current graphic line width (EDGE layer only)
+    m_PcbTextWidth     = DEFAULT_TEXT_PCB_THICKNESS;    // current Pcb (not module) Text width
+
+    m_PcbTextSize       = wxSize( DEFAULT_TEXT_PCB_SIZE,
+                                  DEFAULT_TEXT_PCB_SIZE );  // current Pcb (not module) Text size
+
+    m_TrackMinWidth     = DMils2iu( 100 );      // track min value for width ((min copper size value
+    m_ViasMinSize       = DMils2iu( 350 );      // vias (not micro vias) min diameter
+    m_ViasMinDrill      = DMils2iu( 200 );      // vias (not micro vias) min drill diameter
+    m_MicroViasMinSize  = DMils2iu( 200 );      // micro vias (not vias) min diameter
+    m_MicroViasMinDrill = DMils2iu( 50 );       // micro vias (not vias) min drill diameter
+
+    // Global mask margins:
+    m_SolderMaskMargin  = DEFAULT_SOLDERMASK_CLEARANCE; // Solder mask margin
+    m_SolderMaskMinWidth = DEFAULT_SOLDERMASK_MIN_WIDTH;   // Solder mask min width
+    m_SolderPasteMargin = 0;                    // Solder paste margin absolute value
+    m_SolderPasteMarginRatio = 0.0;             // Solder pask margin ratio value of pad size
+                                                // The final margin is the sum of these 2 values
+                                                // Usually < 0 because the mask is smaller than pad
+
+    m_ModuleTextSize = wxSize( DEFAULT_TEXT_MODULE_SIZE,
+                               DEFAULT_TEXT_MODULE_SIZE );
+    m_ModuleTextWidth = DEFAULT_GR_MODULE_THICKNESS;
+    m_ModuleSegmentWidth = DEFAULT_GR_MODULE_THICKNESS;
+
+    // Layer thickness for 3D viewer
+    m_boardThickness = Millimeter2iu( DEFAULT_BOARD_THICKNESS_MM );
+}
+
+// Add parameters to save in project config.
+// values are saved in mm
+void BOARD_DESIGN_SETTINGS::AppendConfigs( PARAM_CFG_ARRAY* aResult )
+{
+    m_Pad_Master.AppendConfigs( aResult );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "PcbTextSizeV" ),
+                    &m_PcbTextSize.y,
+                    DEFAULT_TEXT_PCB_SIZE, TEXTS_MIN_SIZE, TEXTS_MAX_SIZE,
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "PcbTextSizeH" ),
+                    &m_PcbTextSize.x,
+                    DEFAULT_TEXT_PCB_SIZE, TEXTS_MIN_SIZE, TEXTS_MAX_SIZE,
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "PcbTextThickness" ),
+                    &m_PcbTextWidth,
+                    DEFAULT_TEXT_PCB_THICKNESS,
+                    Millimeter2iu( 0.01 ), Millimeter2iu( 5.0 ),
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "ModuleTextSizeV" ),
+                    &m_ModuleTextSize.y,
+                    DEFAULT_TEXT_MODULE_SIZE, TEXTS_MIN_SIZE, TEXTS_MAX_SIZE,
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "ModuleTextSizeH" ),
+                    &m_ModuleTextSize.x,
+                    DEFAULT_TEXT_MODULE_SIZE, TEXTS_MIN_SIZE, TEXTS_MAX_SIZE,
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "ModuleTextSizeThickness" ),
+                    &m_ModuleTextWidth,
+                    DEFAULT_GR_MODULE_THICKNESS, 1, TEXTS_MAX_WIDTH,
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "SolderMaskClearance" ),
+                    &m_SolderMaskMargin,
+                    DEFAULT_SOLDERMASK_CLEARANCE, 0, Millimeter2iu( 1.0 ),
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "SolderMaskMinWidth" ),
+                    &m_SolderMaskMinWidth,
+                    DEFAULT_SOLDERMASK_MIN_WIDTH, 0, Millimeter2iu( 0.5 ),
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "DrawSegmentWidth" ),
+                    &m_DrawSegmentWidth,
+                    DEFAULT_GRAPHIC_THICKNESS,
+                    Millimeter2iu( 0.01 ), Millimeter2iu( 5.0 ),
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "BoardOutlineThickness" ),
+                    &m_EdgeSegmentWidth,
+                    DEFAULT_PCB_EDGE_THICKNESS,
+                    Millimeter2iu( 0.01 ), Millimeter2iu( 5.0 ),
+                    NULL, MM_PER_IU ) );
+
+    aResult->push_back( new PARAM_CFG_INT_WITH_SCALE( wxT( "ModuleOutlineThickness" ),
+                    &m_ModuleSegmentWidth,
+                    DEFAULT_GR_MODULE_THICKNESS,
+                    Millimeter2iu( 0.01 ), Millimeter2iu( 5.0 ),
+                    NULL, MM_PER_IU ) );
+}
+
+
+// see pcbstruct.h
+int BOARD_DESIGN_SETTINGS::GetVisibleLayers() const
+{
+    return m_VisibleLayers;
+}
+
+
+void BOARD_DESIGN_SETTINGS::SetVisibleAlls()
+{
+    SetVisibleLayers( FULL_LAYERS );
+    m_VisibleElements = -1;
+}
+
+
+void BOARD_DESIGN_SETTINGS::SetVisibleLayers( int aMask )
+{
+    // Although Pcbnew uses only 29, GerbView uses all 32 layers
+    m_VisibleLayers = aMask & m_EnabledLayers & FULL_LAYERS;
+}
+
+
+void BOARD_DESIGN_SETTINGS::SetLayerVisibility( int aLayerIndex, bool aNewState )
+{
+    // Altough Pcbnew uses only 29, GerbView uses all 32 layers
+    if( aLayerIndex < 0 || aLayerIndex >= 32 )
+        return;
+
+    if( aNewState && IsLayerEnabled( aLayerIndex ) )
+        m_VisibleLayers |= 1 << aLayerIndex;
+    else
+        m_VisibleLayers &= ~( 1 << aLayerIndex );
+}
+
+
+void BOARD_DESIGN_SETTINGS::SetElementVisibility( int aElementCategory, bool aNewState )
+{
+    if( aElementCategory < 0 || aElementCategory >= END_PCB_VISIBLE_LIST )
+        return;
+
+    if( aNewState )
+        m_VisibleElements |= 1 << aElementCategory;
+    else
+        m_VisibleElements &= ~( 1 << aElementCategory );
+}
+
+
+void BOARD_DESIGN_SETTINGS::SetCopperLayerCount( int aNewLayerCount )
+{
+    // if( aNewLayerCount < 2 ) aNewLayerCount = 2;
+
+    m_CopperLayerCount = aNewLayerCount;
+
+    // ensure consistency with the m_EnabledLayers member
+    m_EnabledLayers &= ~ALL_CU_LAYERS;
+    m_EnabledLayers |= LAYER_BACK;
+
+    if( m_CopperLayerCount > 1 )
+        m_EnabledLayers |= LAYER_FRONT;
+
+    for( int ii = 1; ii < aNewLayerCount - 1; ii++ )
+        m_EnabledLayers |= 1 << ii;
+}
+
+
+void BOARD_DESIGN_SETTINGS::SetEnabledLayers( int aMask )
+{
+    // Back and front layers are always enabled.
+    aMask |= LAYER_BACK | LAYER_FRONT;
+
+    m_EnabledLayers = aMask;
+
+    // A disabled layer cannot be visible
+    m_VisibleLayers &= aMask;
+
+    // update m_CopperLayerCount to ensure its consistency with m_EnabledLayers
+    m_CopperLayerCount = 0;
+
+    for( int ii = 0;  aMask && ii < NB_COPPER_LAYERS;  ii++, aMask >>= 1 )
+    {
+        if( aMask & 1 )
+            m_CopperLayerCount++;
+    }
+}
